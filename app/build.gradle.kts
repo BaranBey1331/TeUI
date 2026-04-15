@@ -15,9 +15,6 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
     }
 
     buildTypes {
