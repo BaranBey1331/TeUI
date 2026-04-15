@@ -15,7 +15,7 @@ TeUI (Termux UI), Termux benzeri komut deneyimini daha görsel bir mobil arayüz
 
 - `app/` altında Jetpack Compose tabanlı Android uygulaması
 - `app/build.gradle.kts` içinde ABI kısıtı yalnız `arm64-v8a`
-- `.github/workflows/apk-build.yml` içinde release APK build + arm64 doğrulaması
+- `.github/workflows/apk-build.yml` içinde release APK build + arm64 doğrulaması + imzalama (v2/v3)
 
 ## Çalıştırma
 
@@ -27,6 +27,23 @@ gradle :app:assembleRelease
 ```
 
 Release çıktısı `app/build/outputs/apk/release/` altında oluşur ve yalnız arm64-v8a olmalıdır.
+
+## APK imzalama
+
+CI, release APK'yı GitHub Actions secret'larından alınan keystore ile imzalar ve imza şemalarını doğrular.
+
+Gerekli repository secrets:
+
+- `ANDROID_KEYSTORE_BASE64` (JKS dosyasının base64 hali)
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+İmza politikası:
+
+- v1: kapalı
+- v2: açık
+- v3: açık
 
 ## Remotion tanıtım videosu
 
