@@ -4,9 +4,9 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.teui.core.CommandRunner
 import com.teui.core.FilePickerHandler
 import com.teui.core.PickedFile
+import com.teui.core.TermuxCommandRunner
 import com.teui.ui.TeUIScreen
 import java.io.File
 import kotlinx.coroutines.launch
@@ -67,6 +68,15 @@ private fun TeUIRoute() {
         logs = logs + "[Çalışma dizini] ${workingDir.absolutePath}"
     }
 
+    LaunchedEffect(Unit) {
+        val termuxIssue = TermuxCommandRunner.getSetupIssue(context)
+        if (termuxIssue == null) {
+            logs = logs + "[Termux] Bağlandı: komutlar Termux shell üzerinden çalışacak."
+        } else {
+            logs = logs + "[Termux] Yerel shell fallback: $termuxIssue"
+        }
+    }
+
     TeUIScreen(
         commandText = commandText,
         onCommandTextChange = { commandText = it },
@@ -78,10 +88,19 @@ private fun TeUIRoute() {
                 isRunning = true
                 logs = logs + "\$ $trimmed"
 
-                val result = CommandRunner.run(
-                    command = trimmed,
-                    workingDirectory = workingDir,
-                )
+                val termuxIssue = TermuxCommandRunner.getSetupIssue(context)
+                val result = if (termuxIssue == null) {
+                    TermuxCommandRunner.run(
+                        command = trimmed,
+                        workingDirectory = workingDir,
+                        context = context,
+                    )
+                } else {
+                    CommandRunner.run(
+                        command = trimmed,
+                        workingDirectory = workingDir,
+                    )
+                }
 
                 val updatedLogs = mutableListOf<String>()
                 if (result.stdout.isNotBlank()) {

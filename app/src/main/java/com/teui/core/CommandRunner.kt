@@ -1,7 +1,12 @@
 package com.teui.core
 
+import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 data class CommandResult(
@@ -13,49 +18,101 @@ data class CommandResult(
 )
 
 object CommandRunner {
+    private val lock = Mutex()
+
+    private var shellProcess: Process? = null
+    private var shellInput: BufferedWriter? = null
+    private var shellOutput: BufferedReader? = null
+    private var activeWorkingDirectory: File? = null
+
     suspend fun run(command: String, workingDirectory: File): CommandResult = withContext(Dispatchers.IO) {
-        val startedAt = System.currentTimeMillis()
-        val marker = "__TEUI_PWD_MARKER_${System.nanoTime()}__"
+        lock.withLock {
+            val startedAt = System.currentTimeMillis()
+            ensureShell(workingDirectory)
 
-        val wrappedCommand = """
-            $command
-            __teui_exit=$?
-            printf '\n${marker}%s\n' "$(pwd)"
-            exit $__teui_exit
-        """.trimIndent()
+            val marker = "TEUI_${System.nanoTime()}"
+            val startMarker = "__${marker}_START__"
+            val pwdPrefix = "__${marker}_PWD__"
+            val exitPrefix = "__${marker}_EXIT__"
 
-        val processBuilder = ProcessBuilder("sh", "-c", wrappedCommand)
-            .redirectErrorStream(false)
-            .directory(workingDirectory)
+            writeCommand(command, startMarker, pwdPrefix, exitPrefix)
 
-        processBuilder.environment()["HOME"] = workingDirectory.absolutePath
-        processBuilder.environment()["PWD"] = workingDirectory.absolutePath
+            val output = StringBuilder()
+            var didStart = false
+            var exitCode = 0
+            var resolvedDirectory = activeWorkingDirectory ?: workingDirectory
 
-        val process = processBuilder.start()
+            while (true) {
+                val line = shellOutput?.readLine() ?: throw IOException("Shell oturumu beklenmedik şekilde kapandı")
 
-        val rawStdout = process.inputStream.bufferedReader().use { it.readText() }
-        val stderr = process.errorStream.bufferedReader().use { it.readText() }.trimEnd()
-        val exitCode = process.waitFor()
-        val durationMs = System.currentTimeMillis() - startedAt
+                when {
+                    !didStart && line == startMarker -> {
+                        didStart = true
+                    }
 
-        val markerIndex = rawStdout.lastIndexOf(marker)
+                    didStart && line.startsWith(pwdPrefix) -> {
+                        val nextPath = line.removePrefix(pwdPrefix).trim()
+                        if (nextPath.isNotEmpty()) {
+                            resolvedDirectory = File(nextPath)
+                        }
+                    }
 
-        val (stdout, nextDir) = if (markerIndex >= 0) {
-            val pathPart = rawStdout.substring(markerIndex + marker.length)
-            val resolvedPath = pathPart.substringBefore('\n').trim()
-            val cleanedStdout = rawStdout.substring(0, markerIndex).trimEnd()
-            val resolvedDir = if (resolvedPath.isNotBlank()) File(resolvedPath) else workingDirectory
-            cleanedStdout to resolvedDir
-        } else {
-            rawStdout.trimEnd() to workingDirectory
+                    didStart && line.startsWith(exitPrefix) -> {
+                        exitCode = line.removePrefix(exitPrefix).trim().toIntOrNull() ?: 1
+                        break
+                    }
+
+                    didStart -> {
+                        if (output.isNotEmpty()) output.append('\n')
+                        output.append(line)
+                    }
+                }
+            }
+
+            val nextDirectory = if (resolvedDirectory.exists() && resolvedDirectory.isDirectory) {
+                resolvedDirectory
+            } else {
+                workingDirectory
+            }
+
+            activeWorkingDirectory = nextDirectory
+
+            CommandResult(
+                stdout = output.toString().trimEnd(),
+                stderr = "",
+                exitCode = exitCode,
+                durationMs = System.currentTimeMillis() - startedAt,
+                workingDirectory = nextDirectory,
+            )
         }
+    }
 
-        CommandResult(
-            stdout = stdout,
-            stderr = stderr,
-            exitCode = exitCode,
-            durationMs = durationMs,
-            workingDirectory = nextDir,
-        )
+    private fun ensureShell(initialDirectory: File) {
+        if (shellProcess?.isAlive == true) return
+
+        shellProcess?.destroy()
+
+        val process = ProcessBuilder("sh")
+            .directory(initialDirectory)
+            .redirectErrorStream(true)
+            .start()
+
+        shellProcess = process
+        shellInput = process.outputStream.bufferedWriter()
+        shellOutput = process.inputStream.bufferedReader()
+        activeWorkingDirectory = initialDirectory
+    }
+
+    private fun writeCommand(command: String, startMarker: String, pwdPrefix: String, exitPrefix: String) {
+        val input = shellInput ?: throw IOException("Shell stdin hazır değil")
+
+        input.write("printf '%s\\n' '$startMarker'\n")
+        input.write("{\n")
+        input.write(command)
+        input.write("\n}\n")
+        input.write("__teui_exit=$?\n")
+        input.write("printf '%s%s\\n' '$pwdPrefix' \"$(pwd)\"\n")
+        input.write("printf '%s%s\\n' '$exitPrefix' \"$__teui_exit\"\n")
+        input.flush()
     }
 }
