@@ -2,9 +2,9 @@ package com.teui
 
 import android.net.Uri
 import android.os.Bundle
-import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +19,7 @@ import com.teui.core.CommandRunner
 import com.teui.core.FilePickerHandler
 import com.teui.core.PickedFile
 import com.teui.ui.TeUIScreen
+import java.io.File
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -58,8 +59,8 @@ private fun TeUIRoute() {
         )
     }
 
-    val workingDir = remember(context) {
-        context.filesDir
+    var workingDir by remember(context) {
+        mutableStateOf(context.filesDir)
     }
 
     LaunchedEffect(workingDir) {
@@ -92,6 +93,7 @@ private fun TeUIRoute() {
                 updatedLogs += "[exit=${result.exitCode}] ${result.durationMs}ms"
 
                 logs = logs + updatedLogs
+                workingDir = normalizeWorkingDirectory(result.workingDirectory, context.filesDir)
                 isRunning = false
             }
         },
@@ -103,4 +105,13 @@ private fun TeUIRoute() {
         selectedFile = selectedFile,
         selectedImage = selectedImage
     )
+}
+
+private fun normalizeWorkingDirectory(candidate: File, fallback: File): File {
+    return try {
+        val dir = if (candidate.isDirectory) candidate else fallback
+        if (dir.exists() && dir.canRead() && dir.canExecute()) dir else fallback
+    } catch (_: SecurityException) {
+        fallback
+    }
 }
