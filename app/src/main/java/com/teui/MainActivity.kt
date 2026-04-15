@@ -21,6 +21,8 @@ import com.teui.core.PickedFile
 import com.teui.core.TermuxCommandRunner
 import com.teui.ui.TeUIScreen
 import java.io.File
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -76,6 +78,10 @@ private fun TeUIRoute() {
             logs = logs + "[Termux] Bağlandı: komutlar Termux shell üzerinden çalışacak."
         } else {
             logs = logs + "[Termux] Yerel shell fallback: $termuxIssue"
+            workingDir = resolveExecutionWorkingDirectory(
+                candidate = workingDir,
+                fallback = context.filesDir,
+            )
         }
     }
 
@@ -90,33 +96,53 @@ private fun TeUIRoute() {
                 isRunning = true
                 logs = logs + "\$ $trimmed"
 
-                val termuxIssue = TermuxCommandRunner.getSetupIssue(context)
-                termuxReady = termuxIssue == null
-                val result = if (termuxIssue == null) {
-                    TermuxCommandRunner.run(
-                        command = trimmed,
-                        workingDirectory = workingDir,
-                        context = context,
-                    )
-                } else {
-                    CommandRunner.run(
-                        command = trimmed,
-                        workingDirectory = context.filesDir,
-                    )
-                }
+                try {
+                    val termuxIssue = TermuxCommandRunner.getSetupIssue(context)
+                    val usedTermux = termuxIssue == null
+                    termuxReady = usedTermux
+                    val result = if (usedTermux) {
+                        val requestedDir = TermuxCommandRunner.normalizeTermuxWorkingDirectory(workingDir)
+                        TermuxCommandRunner.run(
+                            command = trimmed,
+                            workingDirectory = requestedDir,
+                            context = context,
+                        )
+                    } else {
+                        val requestedDir = resolveExecutionWorkingDirectory(
+                            candidate = workingDir,
+                            fallback = context.filesDir,
+                        )
+                        CommandRunner.run(
+                            command = trimmed,
+                            workingDirectory = requestedDir,
+                        )
+                    }
 
-                val updatedLogs = mutableListOf<String>()
-                if (result.stdout.isNotBlank()) {
-                    updatedLogs += result.stdout
-                }
-                if (result.stderr.isNotBlank()) {
-                    updatedLogs += "[stderr]\n${result.stderr}"
-                }
-                updatedLogs += "[exit=${result.exitCode}] ${result.durationMs}ms"
+                    val updatedLogs = mutableListOf<String>()
+                    if (!usedTermux && termuxIssue != null) {
+                        updatedLogs += "[Termux] Yerel shell fallback: $termuxIssue"
+                    }
+                    if (result.stdout.isNotBlank()) {
+                        updatedLogs += result.stdout
+                    }
+                    if (result.stderr.isNotBlank()) {
+                        updatedLogs += "[stderr]\n${result.stderr}"
+                    }
+                    updatedLogs += "[exit=${result.exitCode}] ${result.durationMs}ms"
 
-                logs = logs + updatedLogs
-                workingDir = normalizeWorkingDirectory(result.workingDirectory, context.filesDir)
-                isRunning = false
+                    logs = logs + updatedLogs
+                    workingDir = normalizeWorkingDirectory(
+                        candidate = result.workingDirectory,
+                        fallback = context.filesDir,
+                        preferTermuxPaths = usedTermux,
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logs = logs + "[TeUI] Komut çalıştırılamadı: ${e.message ?: "bilinmeyen hata"}"
+                } finally {
+                    isRunning = false
+                }
             }
         },
         onPickFile = {
@@ -137,15 +163,30 @@ private fun TeUIRoute() {
     )
 }
 
-private fun normalizeWorkingDirectory(candidate: File, fallback: File): File {
+private fun resolveExecutionWorkingDirectory(candidate: File, fallback: File): File {
+    val safeCandidate = safeDirectory(candidate)
+    return if (safeCandidate != null) safeCandidate else safeDirectory(fallback) ?: fallback
+}
+
+private fun normalizeWorkingDirectory(candidate: File, fallback: File, preferTermuxPaths: Boolean): File {
+    return if (preferTermuxPaths) {
+        TermuxCommandRunner.normalizeTermuxWorkingDirectory(candidate)
+    } else {
+        resolveExecutionWorkingDirectory(candidate, fallback)
+    }
+}
+
+private fun safeDirectory(path: File): File? {
     return try {
-        val dir = if (candidate.isDirectory) candidate else fallback
-        if (dir.exists() && dir.canRead() && dir.canExecute()) {
-            TermuxCommandRunner.normalizeTermuxWorkingDirectory(dir)
+        val canonical = path.canonicalFile
+        if (canonical.exists() && canonical.isDirectory && canonical.canRead() && canonical.canExecute()) {
+            canonical
         } else {
-            TermuxCommandRunner.termuxHomeDirectory()
+            null
         }
+    } catch (_: IOException) {
+        null
     } catch (_: SecurityException) {
-        TermuxCommandRunner.termuxHomeDirectory()
+        null
     }
 }

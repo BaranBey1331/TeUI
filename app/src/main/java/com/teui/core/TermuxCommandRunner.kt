@@ -14,6 +14,9 @@ import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 object TermuxCommandRunner {
@@ -46,6 +49,7 @@ object TermuxCommandRunner {
     private const val RESULT_TIMEOUT_MS = 45_000L
 
     private val requestCounter = AtomicInteger(1000)
+    private val runLock = Mutex()
 
     fun termuxHomeDirectory(): File = File(TERMUX_HOME_PATH)
 
@@ -53,35 +57,48 @@ object TermuxCommandRunner {
 
     suspend fun run(command: String, workingDirectory: File, context: Context): CommandResult =
         withContext(Dispatchers.IO) {
-            val setupIssue = getSetupIssue(context)
-            if (setupIssue != null) {
-                return@withContext CommandResult(
-                    stdout = "",
-                    stderr = setupIssue,
-                    exitCode = 1,
-                    durationMs = 0,
-                    workingDirectory = workingDirectory,
+            runLock.withLock {
+                val setupIssue = getSetupIssue(context)
+                if (setupIssue != null) {
+                    return@withLock CommandResult(
+                        stdout = "",
+                        stderr = setupIssue,
+                        exitCode = 1,
+                        durationMs = 0,
+                        workingDirectory = sanitizeWorkingDirectory(workingDirectory),
+                    )
+                }
+
+                val initialDirectory = sanitizeWorkingDirectory(workingDirectory)
+                val first = runOnce(command, initialDirectory, context)
+
+                if (!shouldRetryWithHome(first)) {
+                    return@withLock first
+                }
+
+                val retried = runOnce(command, termuxHomeDirectory(), context)
+                if (retried.exitCode == 0) {
+                    return@withLock retried.copy(
+                        stdout = buildString {
+                            append("[Termux] Çalışma dizini otomatik düzeltildi (HOME).\n")
+                            if (retried.stdout.isNotBlank()) append(retried.stdout)
+                        }.trimEnd(),
+                    )
+                }
+
+                return@withLock retried.copy(
+                    stderr = buildString {
+                        if (first.stderr.isNotBlank()) {
+                            append(first.stderr.trim())
+                        }
+                        if (retried.stderr.isNotBlank()) {
+                            if (isNotEmpty()) append("\n")
+                            append("[retry@HOME] ")
+                            append(retried.stderr.trim())
+                        }
+                    }.trim(),
                 )
             }
-
-            val initialDirectory = sanitizeWorkingDirectory(workingDirectory)
-            val first = runOnce(command, initialDirectory, context)
-
-            if (!shouldRetryWithHome(first)) {
-                return@withContext first
-            }
-
-            val retried = runOnce(command, termuxHomeDirectory(), context)
-            if (retried.stderr.isBlank()) {
-                return@withContext retried.copy(
-                    stdout = buildString {
-                        append("[Termux] Çalışma dizini otomatik düzeltildi.\n")
-                        if (retried.stdout.isNotBlank()) append(retried.stdout)
-                    }.trimEnd(),
-                )
-            }
-
-            return@withContext retried
         }
 
     private suspend fun runOnce(command: String, workingDirectory: File, context: Context): CommandResult {
@@ -103,11 +120,22 @@ object TermuxCommandRunner {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent != null) receiverResult.intent = intent
-                receiverResult.notified = true
             }
         }
 
-        context.registerReceiver(receiver, IntentFilter(callbackAction), Context.RECEIVER_NOT_EXPORTED)
+        val registered = runCatching {
+            context.registerReceiver(receiver, IntentFilter(callbackAction), Context.RECEIVER_NOT_EXPORTED)
+        }.isSuccess
+
+        if (!registered) {
+            return CommandResult(
+                stdout = "",
+                stderr = "Termux yanıt alıcısı kaydedilemedi.",
+                exitCode = 1,
+                durationMs = System.currentTimeMillis() - startedAt,
+                workingDirectory = workingDirectory,
+            )
+        }
 
         try {
             val callbackIntent = Intent(callbackAction).setPackage(context.packageName)
@@ -129,7 +157,16 @@ object TermuxCommandRunner {
                 putExtra(EXTRA_PENDING_INTENT, pendingIntent)
             }
 
-            val started = context.startService(runIntent)
+            val started = runCatching { context.startService(runIntent) }
+                .getOrElse { startError ->
+                    return CommandResult(
+                        stdout = "",
+                        stderr = "Termux RUN_COMMAND başlatılamadı: ${startError.message ?: "bilinmeyen hata"}",
+                        exitCode = 1,
+                        durationMs = System.currentTimeMillis() - startedAt,
+                        workingDirectory = workingDirectory,
+                    )
+                }
             if (started == null) {
                 return CommandResult(
                     stdout = "",
@@ -185,8 +222,13 @@ object TermuxCommandRunner {
     }
 
     fun requestPermissionIntent(context: Context): Intent {
+        val launchTermux = context.packageManager.getLaunchIntentForPackage(TERMUX_PACKAGE)
+        if (launchTermux != null) {
+            return launchTermux.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
         return Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-            .setData(Uri.parse("package:${context.packageName}"))
+            .setData(Uri.parse("package:$TERMUX_PACKAGE"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
@@ -211,12 +253,10 @@ object TermuxCommandRunner {
     private suspend fun waitForResult(holder: ReceiverResult): Intent? {
         val deadline = System.currentTimeMillis() + RESULT_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
-            if (holder.notified) return holder.intent
-            withContext(Dispatchers.IO) {
-                Thread.sleep(50)
-            }
+            holder.intent?.let { return it }
+            delay(50)
         }
-        return null
+        return holder.intent
     }
 
     private fun sanitizeWorkingDirectory(requested: File): File {
@@ -248,7 +288,6 @@ object TermuxCommandRunner {
     private fun Intent.bundle(key: String): Bundle? = getBundleExtra(key)
 
     private data class ReceiverResult(
-        var notified: Boolean = false,
-        var intent: Intent? = null,
+        @Volatile var intent: Intent? = null,
     )
 }

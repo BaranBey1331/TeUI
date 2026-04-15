@@ -31,6 +31,65 @@ import androidx.compose.ui.unit.dp
 import com.teui.core.PickedFile
 import com.teui.core.toReadableSize
 
+private val TeuiBackground = Color(0xFF0F1115)
+private val TerminalPanelBackground = Color(0xFF0B0D12)
+private val TerminalBaseText = Color(0xFFF2F5F8)
+private val TerminalCommandText = Color(0xFFF6C177)
+private val TerminalCodeText = Color(0xFFB9A3FF)
+private val TerminalErrorText = Color(0xFFFF7B72)
+private val TerminalSuccessText = Color(0xFF7EE787)
+private val TerminalStatusText = Color(0xFF79C0FF)
+
+private fun terminalLineColor(line: String): Color {
+    val normalized = line.trim()
+    if (normalized.isEmpty()) return TerminalBaseText
+
+    val lower = normalized.lowercase()
+
+    val isCommandLine =
+        normalized.startsWith("$") ||
+            normalized.startsWith("#") ||
+            normalized.startsWith(">") ||
+            normalized.startsWith("~$")
+
+    if (isCommandLine) return TerminalCommandText
+
+    val hasError = listOf(
+        "error", "failed", "exception", "traceback", "denied", "fatal", "panic", "unable", "invalid",
+    ).any(lower::contains)
+    if (hasError) return TerminalErrorText
+
+    val hasSuccess = listOf(
+        "success", "ok", "done", "completed", "started", "ready", "connected", "saved", "passed",
+    ).any(lower::contains)
+    if (hasSuccess) return TerminalSuccessText
+
+    val hasStatus = listOf(
+        "info", "status", "debug", "warning", "warn", "listening", "running", "output", "response",
+    ).any(lower::contains)
+    if (hasStatus) return TerminalStatusText
+
+    val looksLikeCode =
+        normalized.contains("{") ||
+            normalized.contains("}") ||
+            normalized.contains("=>") ||
+            normalized.contains("::") ||
+            normalized.contains(";") ||
+            normalized.startsWith("fun ") ||
+            normalized.startsWith("class ") ||
+            normalized.startsWith("import ") ||
+            normalized.startsWith("val ") ||
+            normalized.startsWith("var ") ||
+            normalized.startsWith("if ") ||
+            normalized.startsWith("for ") ||
+            normalized.startsWith("while ") ||
+            normalized.startsWith("return ")
+
+    if (looksLikeCode) return TerminalCodeText
+
+    return TerminalBaseText
+}
+
 @Composable
 fun TeUIScreen(
     commandText: String,
@@ -47,7 +106,7 @@ fun TeUIScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF101114))
+            .background(TeuiBackground)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -178,7 +237,7 @@ private fun TerminalLogPanel(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF0C0D10))
+            .background(TerminalPanelBackground)
             .padding(12.dp)
     ) {
         Column(
@@ -190,7 +249,7 @@ private fun TerminalLogPanel(
             logs.forEach { line ->
                 Text(
                     text = line,
-                    color = Color(0xFFB8F6C1),
+                    color = terminalLineColor(line),
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -204,7 +263,7 @@ private fun TerminalLogPanel(
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .background(Color(0xFF0C0D10))
+                .background(TerminalPanelBackground)
                 .padding(horizontal = 4.dp),
         )
     }
