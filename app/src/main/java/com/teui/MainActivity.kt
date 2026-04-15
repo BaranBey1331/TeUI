@@ -2,6 +2,7 @@ package com.teui
 
 import android.net.Uri
 import android.os.Bundle
+import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -57,6 +58,14 @@ private fun TeUIRoute() {
         )
     }
 
+    val workingDir = remember(context) {
+        context.filesDir
+    }
+
+    LaunchedEffect(workingDir) {
+        logs = logs + "[Çalışma dizini] ${workingDir.absolutePath}"
+    }
+
     TeUIScreen(
         commandText = commandText,
         onCommandTextChange = { commandText = it },
@@ -68,7 +77,10 @@ private fun TeUIRoute() {
                 isRunning = true
                 logs = logs + "\$ $trimmed"
 
-                val result = CommandRunner.run(trimmed)
+                val result = CommandRunner.run(
+                    command = trimmed,
+                    workingDirectory = workingDir,
+                )
 
                 val updatedLogs = mutableListOf<String>()
                 if (result.stdout.isNotBlank()) {

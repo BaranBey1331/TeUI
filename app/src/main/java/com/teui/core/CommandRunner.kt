@@ -1,5 +1,6 @@
 package com.teui.core
 
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -11,12 +12,17 @@ data class CommandResult(
 )
 
 object CommandRunner {
-    suspend fun run(command: String): CommandResult = withContext(Dispatchers.IO) {
+    suspend fun run(command: String, workingDirectory: File): CommandResult = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
 
-        val process = ProcessBuilder("sh", "-c", command)
+        val processBuilder = ProcessBuilder("sh", "-c", command)
             .redirectErrorStream(false)
-            .start()
+            .directory(workingDirectory)
+
+        processBuilder.environment()["HOME"] = workingDirectory.absolutePath
+        processBuilder.environment()["PWD"] = workingDirectory.absolutePath
+
+        val process = processBuilder.start()
 
         val stdout = process.inputStream.bufferedReader().use { it.readText() }.trimEnd()
         val stderr = process.errorStream.bufferedReader().use { it.readText() }.trimEnd()
