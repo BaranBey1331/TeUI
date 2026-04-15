@@ -60,9 +60,9 @@ object TermuxCommandRunner {
 
         val wrappedCommand = """
             $command
-            __teui_exit=$?
-            printf '\n${pwdPrefix}%s\n' "$(pwd)"
-            exit $__teui_exit
+            __teui_exit=${'$'}?
+            printf '\n${pwdPrefix}%s\n' "${'$'}(pwd)"
+            exit ${'$'}__teui_exit
         """.trimIndent()
 
         val requestCode = requestCounter.incrementAndGet()

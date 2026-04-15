@@ -110,9 +110,9 @@ object CommandRunner {
         input.write("{\n")
         input.write(command)
         input.write("\n}\n")
-        input.write("__teui_exit=$?\n")
-        input.write("printf '%s%s\\n' '$pwdPrefix' \"$(pwd)\"\n")
-        input.write("printf '%s%s\\n' '$exitPrefix' \"$__teui_exit\"\n")
+        input.write("__teui_exit=\$?\n")
+        input.write("printf '%s%s\\n' '$pwdPrefix' \"\$(pwd)\"\n")
+        input.write("printf '%s%s\\n' '$exitPrefix' \"\$__teui_exit\"\n")
         input.flush()
     }
 }
