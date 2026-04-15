@@ -33,6 +33,7 @@ object TermuxCommandRunner {
     private const val EXTRA_SHELL_NAME = "com.termux.RUN_COMMAND_SHELL_NAME"
     private const val EXTRA_SHELL_CREATE_MODE = "com.termux.RUN_COMMAND_SHELL_CREATE_MODE"
     private const val EXTRA_PENDING_INTENT = "com.termux.RUN_COMMAND_PENDING_INTENT"
+    private const val EXTRA_SESSION_ACTION = "com.termux.RUN_COMMAND_SESSION_ACTION"
 
     private const val EXTRA_PLUGIN_RESULT_BUNDLE = "result"
     private const val EXTRA_PLUGIN_STDOUT = "stdout"
@@ -41,12 +42,20 @@ object TermuxCommandRunner {
     private const val EXTRA_PLUGIN_ERRMSG = "errmsg"
 
     private const val RUNNER_APP_SHELL = "app-shell"
+    private const val RUNNER_TERMINAL_SESSION = "terminal-session"
     private const val SHELL_CREATE_MODE_NO_SHELL_WITH_NAME = "no-shell-with-name"
+    private const val SHELL_CREATE_MODE_ALWAYS = "always"
 
     private const val TERMUX_SHELL_NAME = "teui-shell"
     private const val TERMUX_HOME_PATH = "/data/data/com.termux/files/home"
+
+    private const val SESSION_ACTION_SWITCH_NEW_AND_OPEN = 0
+    private const val SESSION_ACTION_KEEP_CURRENT_AND_OPEN = 1
+    private const val SESSION_ACTION_SWITCH_NEW_AND_DONT_OPEN = 2
+    private const val SESSION_ACTION_KEEP_CURRENT_AND_DONT_OPEN = 3
     private const val TERMUX_FILES_PREFIX = "/data/data/com.termux/files/"
     private const val RESULT_TIMEOUT_MS = 45_000L
+    private const val INTERACTIVE_RESULT_TIMEOUT_MS = 1_500L
 
     private val requestCounter = AtomicInteger(1000)
     private val runLock = Mutex()
@@ -113,6 +122,8 @@ object TermuxCommandRunner {
             exit ${'$'}__teui_exit
         """.trimIndent()
 
+        val interactive = isInteractiveCommand(command)
+
         val requestCode = requestCounter.incrementAndGet()
         val callbackAction = "${context.packageName}.TERMUX_RESULT.$requestCode"
 
@@ -150,11 +161,17 @@ object TermuxCommandRunner {
                 putExtra(EXTRA_COMMAND_PATH, "/data/data/com.termux/files/usr/bin/sh")
                 putExtra(EXTRA_ARGUMENTS, arrayOf("-lc", wrappedCommand))
                 putExtra(EXTRA_WORKDIR, workingDirectory.absolutePath)
-                putExtra(EXTRA_RUNNER, RUNNER_APP_SHELL)
-                putExtra(EXTRA_BACKGROUND, true)
+                putExtra(EXTRA_RUNNER, if (interactive) RUNNER_TERMINAL_SESSION else RUNNER_APP_SHELL)
+                putExtra(EXTRA_BACKGROUND, !interactive)
                 putExtra(EXTRA_SHELL_NAME, TERMUX_SHELL_NAME)
-                putExtra(EXTRA_SHELL_CREATE_MODE, SHELL_CREATE_MODE_NO_SHELL_WITH_NAME)
+                putExtra(
+                    EXTRA_SHELL_CREATE_MODE,
+                    if (interactive) SHELL_CREATE_MODE_ALWAYS else SHELL_CREATE_MODE_NO_SHELL_WITH_NAME,
+                )
                 putExtra(EXTRA_PENDING_INTENT, pendingIntent)
+                if (interactive) {
+                    putExtra(EXTRA_SESSION_ACTION, SESSION_ACTION_KEEP_CURRENT_AND_DONT_OPEN)
+                }
             }
 
             val started = runCatching { context.startService(runIntent) }
@@ -177,15 +194,28 @@ object TermuxCommandRunner {
                 )
             }
 
-            val responseIntent = waitForResult(receiverResult)
+            val responseIntent = waitForResult(
+                holder = receiverResult,
+                timeoutMs = if (interactive) INTERACTIVE_RESULT_TIMEOUT_MS else RESULT_TIMEOUT_MS,
+            )
             if (responseIntent == null) {
-                return CommandResult(
-                    stdout = "",
-                    stderr = "Termux komut sonucu zaman aşımına uğradı.",
-                    exitCode = 124,
-                    durationMs = System.currentTimeMillis() - startedAt,
-                    workingDirectory = workingDirectory,
-                )
+                return if (interactive) {
+                    CommandResult(
+                        stdout = "[Termux] Etkileşimli komut terminal oturumuna aktarıldı.",
+                        stderr = "",
+                        exitCode = 0,
+                        durationMs = System.currentTimeMillis() - startedAt,
+                        workingDirectory = workingDirectory,
+                    )
+                } else {
+                    CommandResult(
+                        stdout = "",
+                        stderr = "Termux komut sonucu zaman aşımına uğradı.",
+                        exitCode = 124,
+                        durationMs = System.currentTimeMillis() - startedAt,
+                        workingDirectory = workingDirectory,
+                    )
+                }
             }
 
             val bundle = responseIntent.bundle(EXTRA_PLUGIN_RESULT_BUNDLE)
@@ -250,8 +280,8 @@ object TermuxCommandRunner {
         return context.packageManager.resolveService(intent, 0) != null
     }
 
-    private suspend fun waitForResult(holder: ReceiverResult): Intent? {
-        val deadline = System.currentTimeMillis() + RESULT_TIMEOUT_MS
+    private suspend fun waitForResult(holder: ReceiverResult, timeoutMs: Long): Intent? {
+        val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             holder.intent?.let { return it }
             delay(50)
@@ -273,6 +303,22 @@ object TermuxCommandRunner {
         if (result.exitCode != 1) return false
         val msg = result.stderr.lowercase(Locale.ROOT)
         return msg.contains("error code: `150`") || msg.contains("working directory not found")
+    }
+
+    private fun isInteractiveCommand(command: String): Boolean {
+        val normalized = command.trim().lowercase(Locale.ROOT)
+        if (normalized.isEmpty()) return false
+
+        return normalized.startsWith("proot-distro login") ||
+            normalized.startsWith("ssh ") ||
+            normalized.startsWith("tmux") ||
+            normalized.startsWith("nano") ||
+            normalized.startsWith("vim") ||
+            normalized.startsWith("vi ") ||
+            normalized == "bash" ||
+            normalized == "sh" ||
+            normalized.startsWith("python") ||
+            normalized.startsWith("node")
     }
 
     private fun File.safeCanonical(): File {
