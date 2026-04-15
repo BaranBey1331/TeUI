@@ -62,7 +62,7 @@ private fun TeUIRoute() {
     }
 
     var workingDir by remember(context) {
-        mutableStateOf(context.filesDir)
+        mutableStateOf(TermuxCommandRunner.termuxHomeDirectory())
     }
 
     LaunchedEffect(workingDir) {
@@ -101,7 +101,7 @@ private fun TeUIRoute() {
                 } else {
                     CommandRunner.run(
                         command = trimmed,
-                        workingDirectory = workingDir,
+                        workingDirectory = context.filesDir,
                     )
                 }
 
@@ -140,8 +140,12 @@ private fun TeUIRoute() {
 private fun normalizeWorkingDirectory(candidate: File, fallback: File): File {
     return try {
         val dir = if (candidate.isDirectory) candidate else fallback
-        if (dir.exists() && dir.canRead() && dir.canExecute()) dir else fallback
+        if (dir.exists() && dir.canRead() && dir.canExecute()) {
+            TermuxCommandRunner.normalizeTermuxWorkingDirectory(dir)
+        } else {
+            TermuxCommandRunner.termuxHomeDirectory()
+        }
     } catch (_: SecurityException) {
-        fallback
+        TermuxCommandRunner.termuxHomeDirectory()
     }
 }

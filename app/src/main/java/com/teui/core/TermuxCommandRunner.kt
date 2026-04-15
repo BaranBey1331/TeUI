@@ -10,6 +10,8 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import java.io.File
+import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,22 +41,50 @@ object TermuxCommandRunner {
     private const val SHELL_CREATE_MODE_NO_SHELL_WITH_NAME = "no-shell-with-name"
 
     private const val TERMUX_SHELL_NAME = "teui-shell"
+    private const val TERMUX_HOME_PATH = "/data/data/com.termux/files/home"
+    private const val TERMUX_FILES_PREFIX = "/data/data/com.termux/files/"
     private const val RESULT_TIMEOUT_MS = 45_000L
 
     private val requestCounter = AtomicInteger(1000)
 
-    suspend fun run(command: String, workingDirectory: File, context: Context): CommandResult = withContext(Dispatchers.IO) {
-        val setupIssue = getSetupIssue(context)
-        if (setupIssue != null) {
-            return@withContext CommandResult(
-                stdout = "",
-                stderr = setupIssue,
-                exitCode = 1,
-                durationMs = 0,
-                workingDirectory = workingDirectory,
-            )
+    fun termuxHomeDirectory(): File = File(TERMUX_HOME_PATH)
+
+    fun normalizeTermuxWorkingDirectory(path: File): File = sanitizeWorkingDirectory(path)
+
+    suspend fun run(command: String, workingDirectory: File, context: Context): CommandResult =
+        withContext(Dispatchers.IO) {
+            val setupIssue = getSetupIssue(context)
+            if (setupIssue != null) {
+                return@withContext CommandResult(
+                    stdout = "",
+                    stderr = setupIssue,
+                    exitCode = 1,
+                    durationMs = 0,
+                    workingDirectory = workingDirectory,
+                )
+            }
+
+            val initialDirectory = sanitizeWorkingDirectory(workingDirectory)
+            val first = runOnce(command, initialDirectory, context)
+
+            if (!shouldRetryWithHome(first)) {
+                return@withContext first
+            }
+
+            val retried = runOnce(command, termuxHomeDirectory(), context)
+            if (retried.stderr.isBlank()) {
+                return@withContext retried.copy(
+                    stdout = buildString {
+                        append("[Termux] Çalışma dizini otomatik düzeltildi.\n")
+                        if (retried.stdout.isNotBlank()) append(retried.stdout)
+                    }.trimEnd(),
+                )
+            }
+
+            return@withContext retried
         }
 
+    private suspend fun runOnce(command: String, workingDirectory: File, context: Context): CommandResult {
         val startedAt = System.currentTimeMillis()
         val marker = "TEUI_TERMUX_${System.nanoTime()}"
         val pwdPrefix = "__${marker}_PWD__"
@@ -101,7 +131,7 @@ object TermuxCommandRunner {
 
             val started = context.startService(runIntent)
             if (started == null) {
-                return@withContext CommandResult(
+                return CommandResult(
                     stdout = "",
                     stderr = "Termux RUN_COMMAND servisi başlatılamadı.",
                     exitCode = 1,
@@ -112,7 +142,7 @@ object TermuxCommandRunner {
 
             val responseIntent = waitForResult(receiverResult)
             if (responseIntent == null) {
-                return@withContext CommandResult(
+                return CommandResult(
                     stdout = "",
                     stderr = "Termux komut sonucu zaman aşımına uğradı.",
                     exitCode = 124,
@@ -133,16 +163,16 @@ object TermuxCommandRunner {
                 val resolvedPath = pathPart.substringBefore('\n').trim()
                 val cleanedStdout = rawStdout.substring(0, markerIndex).trimEnd()
                 val resolvedDir = if (resolvedPath.isNotBlank()) File(resolvedPath) else workingDirectory
-                cleanedStdout to resolvedDir
+                cleanedStdout to sanitizeWorkingDirectory(resolvedDir)
             } else {
-                rawStdout.trimEnd() to workingDirectory
+                rawStdout.trimEnd() to sanitizeWorkingDirectory(workingDirectory)
             }
 
             val stderr = listOf(stderrBase.trim(), errMsg.trim())
                 .filter { it.isNotEmpty() }
                 .joinToString(separator = "\n")
 
-            CommandResult(
+            return CommandResult(
                 stdout = stdout,
                 stderr = stderr,
                 exitCode = exitCode,
@@ -187,6 +217,32 @@ object TermuxCommandRunner {
             }
         }
         return null
+    }
+
+    private fun sanitizeWorkingDirectory(requested: File): File {
+        val canonicalRequested = requested.safeCanonical()
+        return if (isTermuxPath(canonicalRequested)) canonicalRequested else termuxHomeDirectory()
+    }
+
+    private fun isTermuxPath(path: File): Boolean {
+        val normalized = path.safeCanonical().absolutePath
+        return normalized.startsWith(TERMUX_FILES_PREFIX)
+    }
+
+    private fun shouldRetryWithHome(result: CommandResult): Boolean {
+        if (result.exitCode != 1) return false
+        val msg = result.stderr.lowercase(Locale.ROOT)
+        return msg.contains("error code: `150`") || msg.contains("working directory not found")
+    }
+
+    private fun File.safeCanonical(): File {
+        return try {
+            canonicalFile
+        } catch (_: IOException) {
+            absoluteFile
+        } catch (_: SecurityException) {
+            absoluteFile
+        }
     }
 
     private fun Intent.bundle(key: String): Bundle? = getBundleExtra(key)
