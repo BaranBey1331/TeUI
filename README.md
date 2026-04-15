@@ -38,16 +38,7 @@ Video projesi `video/` klasöründedir.
 - Kısa sürüm: [`video/out/teui-promo-short.mp4`](video/out/teui-promo-short.mp4)
 - Kapak karesi: [`video/out/teui-still.png`](video/out/teui-still.png)
 
-### Yerelde yeniden üretme
-
-```bash
-cd video
-npm install
-npm run voiceover
-NODE_OPTIONS="--require ./scripts/mock-network.js" npx remotion still src/index.ts TeuiPromo out/teui-still.png --frame=30 --scale=0.25
-NODE_OPTIONS="--require ./scripts/mock-network.js" npx remotion render src/index.ts TeuiPromo out/teui-promo.mp4
-NODE_OPTIONS="--require ./scripts/mock-network.js" npx remotion render src/index.ts TeuiPromo out/teui-promo-short.mp4 --frames=0-899 --concurrency=4
-```
+### Tanıtım detayları
 
 - Kompozisyon: `TeuiPromo`
 - Hedef: 1080x1920, 30fps, yaklaşık 60s
