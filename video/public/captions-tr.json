@@ -1,0 +1,8 @@
+[
+  {"text":"TeUI, Termux deneyimini mobilde daha görsel ve daha okunabilir hale getiriyor.","startMs":0,"endMs":8000,"timestampMs":null,"confidence":null},
+  {"text":"Küçük ekranda komut yönetimi zor; TeUI terminal deneyimini sade ve net hale getiriyor.","startMs":8000,"endMs":17000,"timestampMs":null,"confidence":null},
+  {"text":"Komutu uygulamadan yazıp çalıştır. Çıktıyı aynı panelde canlı şekilde takip et.","startMs":17000,"endMs":27000,"timestampMs":null,"confidence":null},
+  {"text":"Dosya veya resim seç. Tür ve boyut bilgisini gör. Resimler için hızlı önizleme al.","startMs":27000,"endMs":36000,"timestampMs":null,"confidence":null},
+  {"text":"CI tarafında yalnız arm64-v8a APK üretilir; dağıtım hattı sade ve kontrol edilebilir olur.","startMs":36000,"endMs":47000,"timestampMs":null,"confidence":null},
+  {"text":"TeUI MVP: komut çalıştırma, görsel terminal ve yükleme akışıyla gerçek kullanıma hazır temel.","startMs":47000,"endMs":60000,"timestampMs":null,"confidence":null}
+]
