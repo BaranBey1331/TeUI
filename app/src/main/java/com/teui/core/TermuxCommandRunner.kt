@@ -49,9 +49,6 @@ object TermuxCommandRunner {
     private const val TERMUX_SHELL_NAME = "teui-shell"
     private const val TERMUX_HOME_PATH = "/data/data/com.termux/files/home"
 
-    private const val SESSION_ACTION_SWITCH_NEW_AND_OPEN = 0
-    private const val SESSION_ACTION_KEEP_CURRENT_AND_OPEN = 1
-    private const val SESSION_ACTION_SWITCH_NEW_AND_DONT_OPEN = 2
     private const val SESSION_ACTION_KEEP_CURRENT_AND_DONT_OPEN = 3
     private const val TERMUX_FILES_PREFIX = "/data/data/com.termux/files/"
     private const val RESULT_TIMEOUT_MS = 45_000L
@@ -79,13 +76,56 @@ object TermuxCommandRunner {
                 }
 
                 val initialDirectory = sanitizeWorkingDirectory(workingDirectory)
-                val first = runOnce(command, initialDirectory, context)
+                val initialInteractive = isInteractiveCommand(command)
+                val first = runOnce(
+                    command = command,
+                    workingDirectory = initialDirectory,
+                    context = context,
+                    interactive = initialInteractive,
+                )
 
-                if (!shouldRetryWithHome(first)) {
-                    return@withLock first
+                val maybeRerouted = if (!initialInteractive && shouldRerouteToInteractive(first)) {
+                    val rerouted = runOnce(
+                        command = command,
+                        workingDirectory = sanitizeWorkingDirectory(first.workingDirectory),
+                        context = context,
+                        interactive = true,
+                    )
+
+                    if (rerouted.exitCode == 0) {
+                        rerouted.copy(
+                            stdout = buildString {
+                                append("[Termux] Komut etkileşimli moda aktarıldı.\n")
+                                if (rerouted.stdout.isNotBlank()) append(rerouted.stdout)
+                            }.trimEnd(),
+                        )
+                    } else {
+                        rerouted.copy(
+                            stderr = buildString {
+                                if (first.stderr.isNotBlank()) append(first.stderr.trim())
+                                if (rerouted.stderr.isNotBlank()) {
+                                    if (isNotEmpty()) append("\n")
+                                    append("[reroute@interactive] ")
+                                    append(rerouted.stderr.trim())
+                                }
+                            }.trim(),
+                        )
+                    }
+                } else {
+                    first
                 }
 
-                val retried = runOnce(command, termuxHomeDirectory(), context)
+                if (!shouldRetryWithHome(maybeRerouted)) {
+                    return@withLock maybeRerouted
+                }
+
+                val retried = runOnce(
+                    command = command,
+                    workingDirectory = termuxHomeDirectory(),
+                    context = context,
+                    interactive = true,
+                )
+
                 if (retried.exitCode == 0) {
                     return@withLock retried.copy(
                         stdout = buildString {
@@ -97,8 +137,8 @@ object TermuxCommandRunner {
 
                 return@withLock retried.copy(
                     stderr = buildString {
-                        if (first.stderr.isNotBlank()) {
-                            append(first.stderr.trim())
+                        if (maybeRerouted.stderr.isNotBlank()) {
+                            append(maybeRerouted.stderr.trim())
                         }
                         if (retried.stderr.isNotBlank()) {
                             if (isNotEmpty()) append("\n")
@@ -110,7 +150,12 @@ object TermuxCommandRunner {
             }
         }
 
-    private suspend fun runOnce(command: String, workingDirectory: File, context: Context): CommandResult {
+    private suspend fun runOnce(
+        command: String,
+        workingDirectory: File,
+        context: Context,
+        interactive: Boolean,
+    ): CommandResult {
         val startedAt = System.currentTimeMillis()
         val marker = "TEUI_TERMUX_${System.nanoTime()}"
         val pwdPrefix = "__${marker}_PWD__"
@@ -121,8 +166,6 @@ object TermuxCommandRunner {
             printf '\n${pwdPrefix}%s\n' "${'$'}(pwd)"
             exit ${'$'}__teui_exit
         """.trimIndent()
-
-        val interactive = isInteractiveCommand(command)
 
         val requestCode = requestCounter.incrementAndGet()
         val callbackAction = "${context.packageName}.TERMUX_RESULT.$requestCode"
@@ -303,6 +346,18 @@ object TermuxCommandRunner {
         if (result.exitCode != 1) return false
         val msg = result.stderr.lowercase(Locale.ROOT)
         return msg.contains("error code: `150`") || msg.contains("working directory not found")
+    }
+
+    private fun shouldRerouteToInteractive(result: CommandResult): Boolean {
+        val msg = result.stderr.lowercase(Locale.ROOT)
+        if (result.exitCode == 124) return true
+
+        return msg.contains("interactive") ||
+            msg.contains("tty") ||
+            msg.contains("stdin") ||
+            msg.contains("terminal") ||
+            msg.contains("cannot open") ||
+            msg.contains("not attached")
     }
 
     private fun isInteractiveCommand(command: String): Boolean {
