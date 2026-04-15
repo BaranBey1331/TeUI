@@ -6,8 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +46,7 @@ private fun TeUIRoute() {
 
     var selectedFile by remember { mutableStateOf<PickedFile?>(null) }
     var selectedImage by remember { mutableStateOf<ImageBitmap?>(null) }
+    var termuxReady by remember { mutableStateOf(false) }
 
     val openDocument = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -70,6 +71,7 @@ private fun TeUIRoute() {
 
     LaunchedEffect(Unit) {
         val termuxIssue = TermuxCommandRunner.getSetupIssue(context)
+        termuxReady = termuxIssue == null
         if (termuxIssue == null) {
             logs = logs + "[Termux] Bağlandı: komutlar Termux shell üzerinden çalışacak."
         } else {
@@ -89,6 +91,7 @@ private fun TeUIRoute() {
                 logs = logs + "\$ $trimmed"
 
                 val termuxIssue = TermuxCommandRunner.getSetupIssue(context)
+                termuxReady = termuxIssue == null
                 val result = if (termuxIssue == null) {
                     TermuxCommandRunner.run(
                         command = trimmed,
@@ -119,6 +122,14 @@ private fun TeUIRoute() {
         onPickFile = {
             openDocument.launch(arrayOf("*/*"))
         },
+        onRequestTermuxPermission = {
+            runCatching {
+                context.startActivity(TermuxCommandRunner.requestPermissionIntent(context))
+            }.onFailure {
+                logs = logs + "[Termux] İzin ekranı açılamadı: ${it.message ?: "bilinmeyen hata"}"
+            }
+        },
+        termuxReady = termuxReady,
         logs = logs,
         isRunning = isRunning,
         selectedFile = selectedFile,

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import java.io.File
@@ -151,6 +152,12 @@ object TermuxCommandRunner {
         } finally {
             runCatching { context.unregisterReceiver(receiver) }
         }
+    }
+
+    fun requestPermissionIntent(context: Context): Intent {
+        return Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
     fun getSetupIssue(context: Context): String? {

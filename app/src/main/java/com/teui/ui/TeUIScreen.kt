@@ -37,6 +37,8 @@ fun TeUIScreen(
     onCommandTextChange: (String) -> Unit,
     onRunCommand: () -> Unit,
     onPickFile: () -> Unit,
+    onRequestTermuxPermission: () -> Unit,
+    termuxReady: Boolean,
     logs: List<String>,
     isRunning: Boolean,
     selectedFile: PickedFile?,
@@ -69,6 +71,15 @@ fun TeUIScreen(
             placeholder = { Text("ör. ls -la", color = Color(0xFF81868C)) },
             singleLine = true,
         )
+
+        if (!termuxReady) {
+            Button(
+                onClick = onRequestTermuxPermission,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Termux İznini Aç")
+            }
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
