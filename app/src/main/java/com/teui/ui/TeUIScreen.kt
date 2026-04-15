@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -103,7 +102,10 @@ fun TeUIScreen(
             selectedImage = selectedImage,
         )
 
-        TerminalLogPanel(logs = logs)
+        TerminalLogPanel(
+            logs = logs,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -155,13 +157,15 @@ private fun FilePreviewSection(
 }
 
 @Composable
-private fun TerminalLogPanel(logs: List<String>) {
+private fun TerminalLogPanel(
+    logs: List<String>,
+    modifier: Modifier = Modifier,
+) {
     val scrollState = rememberScrollState()
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .weight(1f)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF0C0D10))
             .padding(12.dp)
